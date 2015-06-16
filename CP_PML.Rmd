@@ -1,0 +1,187 @@
+---
+title: "CourseProjectPML"
+author: "RE"
+date: "Sunday, May 24, 2015"
+output: html_document
+---
+
+# Predicting the Type of Physical Exercise
+
+##Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this analysis, we use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which the exercise is done.
+
+##Processing Data
+
+###Data and Libraries
+
+The training data for this study are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+The test data are available here: 
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har which is a result of the following study:
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human ’13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+
+```{r}
+# needed libraries
+library(caret)
+library(parallel)
+library(doParallel)
+```
+
+### Loading data
+
+Let us download and load the datasets.
+Needed files are at the working directiry.
+
+```{r}
+data <- read.csv("pml-training.csv", header = TRUE)
+test_data  <- read.csv("pml-testing.csv")
+```
+
+
+### Cleaning data
+
+```{r}
+dim(data); 
+``` 
+
+So, the size of the training dataset is large. 
+Hence, lets:
+
+1. Remove columns with over a 90% of NAs
+2. Remove near zero variance predictors
+3. Remove not relevant columns for classification such as x, user name, raw time stamp 1 and  new window and num window.
+4. Convert class into factor
+```{r}
+#remove columns with over a 90% of not a number
+NAsinCol<- apply(data,2,function(x) {sum(is.na(x))});
+training <- data[,which(NAsinCol <  nrow(data)*0.9)];  
+
+#remove near zero variance predictors
+nearZeroCol <- nearZeroVar(training, saveMetrics = TRUE)
+training <- training[, nearZeroCol$nzv==FALSE]
+
+#remove not relevant columns for classification such as x, user_name, raw time stamp 1  and 2, "new_window" and "num_window", ie 1-6
+training<-training[,7:ncol(training)]
+
+#class into factor
+training$classe <- factor(training$classe)
+``` 
+
+## Creating Training and Testing Subsets
+
+Let us split the data: 60% for training, 40% for testing
+
+
+```{r}
+inTrain <- createDataPartition (y = training$classe, p=0.6,list=FALSE)
+training <- training[inTrain, ];
+testing <- training[-inTrain, ];
+
+```
+
+## Training
+Let we use two  methods for building  prediction models: random forest and  linear discriminant analysis models cause these methods are two of the most powerful and popular models for building prediction algorithm.
+
+Then we compare the results obtained from both methods to get a sense of the predictions robustness.
+
+
+```{r}
+library(gbm)
+library(e1071)
+library(randomForest)
+#random seed
+set.seed(1968)
+#parallel computing for multi-core
+registerDoParallel(makeCluster(detectCores()))
+#two models are generated:  linear discriminant analysis ('lda')  and  random forest   ("rf") 
+rfModel <- randomForest(classe ~ ., data = training)
+ldaModel <-train(classe ~ ., method = 'lda', data = training)
+
+
+```
+
+
+##Accuracy
+
+We use confusion matrix to find the accuracy of our  random forest model.
+
+```{r}
+print("Random Forest Accuracy ")
+print(confusionMatrix(testing$classe,predict(rfModel,testing)))
+print("Linear Discriminant Analysis")
+print(confusionMatrix( testing$classe, predict(ldaModel , testing)))
+
+```
+
+It can be seen that both methods have very high accuracy but random forest method has  higher accuracy.
+
+
+##  Cross validation
+The cross validation technique is employed  to improve the  random forest model and  to avoid over-fitting
+
+```{r}
+#random seed
+set.seed(1971)
+#parallel computing for multi-core
+registerDoParallel(makeCluster(detectCores()))  
+controlf <- trainControl(method = "repeatedcv", number = 10, repeats = 10)
+rfModel_CV <- train(classe ~ ., method="rf",  data=training, trControl = controlf)
+
+```
+
+The final accuracy of the  random forest model with cross validation is:
+
+```{r}
+print("Random forest accuracy after CV")
+rfModel_CV_accuracy <- predict(rfModel_CV , testing)
+print(confusionMatrix(rfModel_CV_accuracy, testing$classe))
+
+```
+
+We saw the accuracy is  slightly better than the baseline accuracy.
+
+
+## Variables importance
+We can estimate the importance of the variables in random forest model tuning by cross validation.
+
+
+```{r}
+print("Variables importance in model")
+vImp = varImp(rfModel_CV$finalModel)
+vImp$var<-rownames(vImp)
+vImp = as.data.frame(vImp[with(vImp, order(vImp$Overall, decreasing=TRUE)), ])
+rownames(vImp) <- NULL
+print(vImp)
+
+```
+
+# Prediction Assignment Submission 
+
+The random forest model tuning cross validation (*rfModel_CV*) is used to predict 20 test cases from the test data. 
+
+```{r}
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("C:/Downloads/LearningR/problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+
+predictionAssignmet<- function(){
+  prediction <- predict(rfModel_CV, test_data)
+  print(prediction)
+  answers <- as.vector(prediction)
+  pml_write_files(answers)
+}
+
+predictionAssignmet()
+
+```
+
+
+
